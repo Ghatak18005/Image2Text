@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Image Text Extractor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f7f7f9; }
+        .drop-zone {
+            border: 2px dashed #a0a0a0;
+            transition: all 0.2s ease-in-out;
+        }
+        .drop-zone.active {
+            border-color: #3b82f6;
+            background-color: #e0f2fe;
+        }
+        #imagePreview {
+            max-height: 400px;
+            width: auto;
+            object-fit: contain;
+        }
+    </style>
+    <!-- Firebase Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables provided by the environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        setLogLevel('Debug'); // Enable debug logging for Firestore
+
+        // Authentication logic
+        async function authenticate() {
+            try {
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Firebase authentication failed:", error);
+            }
+        }
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                console.log("User authenticated:", user.uid);
+            } else {
+                console.log("No user signed in.");
+            }
+        });
+
+        authenticate();
+    </script>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+    <div class="max-w-4xl mx-auto bg-white p-6 md:p-10 rounded-xl shadow-2xl">
+        <h1 class="text-3xl font-extrabold text-gray-800 mb-6 text-center">AI Image Text Extractor</h1>
+        <p class="text-gray-600 mb-8 text-center">Upload an image to extract text using the Gemini API. Try the **Cognitive Action Mapping (CAM)** for intent-based extraction!</p>
+
+        <!-- Image Upload Section -->
+        <div id="dropZone" class="drop-zone flex flex-col items-center justify-center p-8 mb-6 rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
+            <input type="file" id="imageInput" accept="image/*" class="hidden" onchange="handleFile(this.files[0])">
+            <svg class="w-10 h-10 text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+            <p class="text-sm text-gray-600 font-semibold">Drag & drop an image here, or <span class="text-blue-600 hover:text-blue-700 font-bold" onclick="document.getElementById('imageInput').click()">click to select a file</span></p>
+            <p class="text-xs text-gray-500 mt-1">(PNG or JPG, max size 5MB)</p>
+        </div>
+
+        <!-- Preview and Controls Section -->
+        <div id="contentArea" class="hidden">
+            <div class="flex flex-col md:flex-row gap-6 mb-6">
+                <!-- Image Preview -->
+                <div class="md:w-1/2 p-4 border rounded-lg bg-gray-50 flex flex-col items-center justify-center">
+                    <h2 class="text-lg font-semibold text-gray-700 mb-3">Image Preview</h2>
+                    <img id="imagePreview" class="rounded-lg shadow-md max-w-full" src="" alt="Image Preview">
+                </div>
+                
+                <!-- Extraction Controls -->
+                <div class="md:w-1/2 flex flex-col justify-center p-4">
+                    <div class="mb-4">
+                        <label for="extractionMode" class="block text-sm font-medium text-gray-700 mb-2">Extraction Mode</label>
+                        <select id="extractionMode" class="w-full p-2 border border-gray-300 rounded-lg bg-white focus:ring-blue-500 focus:border-blue-500">
+                            <option value="raw">Raw Text Extraction (Standard OCR)</option>
+                            <option value="receipt">Structured Extraction (Receipt/Invoice JSON)</option>
+                            <option value="cam">Cognitive Action Mapping (CAM)</option>
+                        </select>
+                    </div>
+
+                    <button id="extractButton" onclick="extractText()" disabled
+                        class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed">
+                        <span id="buttonText">Extract Text</span>
+                        <svg id="spinner" class="animate-spin -ml-1 mr-3 h-5 w-5 text-white hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    </button>
+
+                    <div id="messageBox" class="mt-4 p-3 w-full hidden text-sm rounded-lg" role="alert"></div>
+                </div>
+            </div>
+
+            <!-- Results Section -->
+            <div class="mt-6">
+                <h2 class="text-xl font-bold text-gray-800 mb-3">Extracted Text Result</h2>
+                <textarea id="resultTextarea" rows="12" placeholder="Extracted text will appear here..." readonly
+                    class="w-full p-4 border border-gray-300 rounded-lg bg-gray-50 text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y font-mono"></textarea>
+                <button id="copyButton" onclick="copyToClipboard()" disabled
+                    class="mt-3 bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed">
+                    Copy to Clipboard
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Core Application Logic ---
+
+        let base64Image = '';
+        const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
+
+        const dropZone = document.getElementById('dropZone');
+        const imageInput = document.getElementById('imageInput');
+        const imagePreview = document.getElementById('imagePreview');
+        const contentArea = document.getElementById('contentArea');
+        const extractButton = document.getElementById('extractButton');
+        const resultTextarea = document.getElementById('resultTextarea');
+        const copyButton = document.getElementById('copyButton');
+        const spinner = document.getElementById('spinner');
+        const buttonText = document.getElementById('buttonText');
+        const messageBox = document.getElementById('messageBox');
+        const extractionMode = document.getElementById('extractionMode');
+
+        // Helper to display messages
+        function showMessage(message, type = 'info') {
+            messageBox.textContent = message;
+            messageBox.className = 'mt-4 p-3 w-full text-sm rounded-lg';
+            if (type === 'error') {
+                messageBox.classList.add('bg-red-100', 'text-red-700');
+            } else if (type === 'success') {
+                messageBox.classList.add('bg-green-100', 'text-green-700');
+            } else {
+                messageBox.classList.add('bg-blue-100', 'text-blue-700');
+            }
+            messageBox.classList.remove('hidden');
+        }
+
+        // Base64 conversion utility
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = error => reject(error);
+            });
+        }
+
+        // Handle file drop/selection
+        async function handleFile(file) {
+            if (!file) return;
+
+            if (file.size > MAX_FILE_SIZE_BYTES) {
+                showMessage(`File size exceeds the 5MB limit. Current size: ${(file.size / 1024 / 1024).toFixed(2)} MB`, 'error');
+                extractButton.disabled = true;
+                contentArea.classList.add('hidden');
+                return;
+            }
+
+            try {
+                // Read the file and update the preview
+                base64Image = await fileToBase64(file);
+                const [mimeType, data] = base64Image.split(',');
+                
+                if (!mimeType.includes('image')) {
+                    showMessage("Invalid file type. Please upload an image (PNG or JPG).", 'error');
+                    return;
+                }
+
+                imagePreview.src = base64Image;
+                base64Image = data; // Store only the base64 data part
+                
+                // Update UI state
+                contentArea.classList.remove('hidden');
+                extractButton.disabled = false;
+                resultTextarea.value = '';
+                copyButton.disabled = true;
+                messageBox.classList.add('hidden');
+
+            } catch (error) {
+                console.error("Error processing file:", error);
+                showMessage("Could not process the image file.", 'error');
+            }
+        }
+
+        // Drag and Drop listeners
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('active');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('active');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('active');
+            if (e.dataTransfer.files.length > 0) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        // --- Gemini API Call Function ---
+        async function extractText() {
+            if (!base64Image) {
+                showMessage("Please select or drop an image first.", 'error');
+                return;
+            }
+
+            extractButton.disabled = true;
+            buttonText.textContent = "Extracting...";
+            spinner.classList.remove('hidden');
+            resultTextarea.value = '';
+            copyButton.disabled = true;
+            messageBox.classList.add('hidden');
+
+            const mode = extractionMode.value;
+            let systemPrompt, userQuery, generationConfig = {};
+
+            if (mode === 'raw') {
+                systemPrompt = "You are a highly efficient OCR system. Your task is to extract all visible text from the image, preserving line breaks and original formatting as closely as possible. Provide only the extracted text, with no introductory or concluding remarks.";
+                userQuery = "Extract the text from this image.";
+            } else if (mode === 'receipt') {
+                systemPrompt = "You are an AI data parser. Your task is to extract key information from the image (assumed to be a receipt or invoice) and return it strictly as a JSON object, following the provided schema. Do not include any text outside the JSON object.";
+                userQuery = "Extract the store name, transaction date, total amount, and all line items (description and price) from this receipt image.";
+                
+                generationConfig = {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            storeName: { "type": "STRING" },
+                            transactionDate: { "type": "STRING", "description": "Date of transaction in YYYY-MM-DD format if possible." },
+                            totalAmount: { "type": "NUMBER", "description": "The final total amount (as a number, without currency symbols)." },
+                            lineItems: {
+                                "type": "ARRAY",
+                                "items": {
+                                    "type": "OBJECT",
+                                    "properties": {
+                                        "description": { "type": "STRING" },
+                                        "price": { "type": "NUMBER" }
+                                    },
+                                    "required": ["description", "price"]
+                                }
+                            }
+                        },
+                        "required": ["storeName", "transactionDate", "totalAmount", "lineItems"]
+                    }
+                };
+            } else if (mode === 'cam') {
+                systemPrompt = "You are a Cognitive Action Mapping (CAM) system. Analyze the text and context within the image to determine the single most likely action the user intends to take. Respond ONLY with a JSON object that adheres strictly to the provided schema. The 'actionType' must be one of the suggested types: CALENDAR_EVENT, TASK_CREATE, CONNECT_WIFI, CREATE_FLASHCARD, or GENERIC.";
+                userQuery = "Analyze the image and extract the implied next action and its parameters.";
+                
+                generationConfig = {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            actionType: { 
+                                type: "STRING", 
+                                enum: ["CALENDAR_EVENT", "TASK_CREATE", "CONNECT_WIFI", "CREATE_FLASHCARD", "GENERIC"],
+                                description: "The single best action implied by the image content."
+                            },
+                            summary: { 
+                                type: "STRING", 
+                                description: "A concise summary of the action (e.g., 'Meeting with Jane', 'New WiFi setup', 'Define Photosynthesis')." 
+                            },
+                            parameters: {
+                                type: "OBJECT",
+                                description: "A flexible object containing specific key-value pairs needed for the action (e.g., SSID and password for CONNECT_WIFI, or name and time for CALENDAR_EVENT). Use smart, context-specific keys."
+                            }
+                        },
+                        required: ["actionType", "summary", "parameters"]
+                    }
+                };
+            }
+
+            const mimeType = 'image/jpeg'; // Assuming common image types, though the API handles various
+
+            const payload = {
+                contents: [{
+                    role: "user",
+                    parts: [
+                        { text: userQuery },
+                        {
+                            inlineData: {
+                                mimeType: mimeType,
+                                data: base64Image
+                            }
+                        }
+                    ]
+                }],
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                }
+            };
+
+            // Add generationConfig only if structured mode is selected (receipt or cam)
+            if (mode === 'receipt' || mode === 'cam') {
+                payload.generationConfig = generationConfig;
+            }
+            
+            // --- FIX FOR LOCAL EXECUTION ---
+            // NOTE: YOU MUST REPLACE "YOUR_GEMINI_API_KEY_HERE" WITH YOUR ACTUAL KEY
+            const apiKey = "YOUR_GEMINI_API_KEY_HERE"; 
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+            // Exponential backoff retry logic
+            for (let attempt = 0; attempt < 3; attempt++) {
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        if (response.status === 429 && attempt < 2) { // 429: Too Many Requests
+                            const delay = Math.pow(2, attempt) * 1000;
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                            continue;
+                        }
+                        // Log status and response text for debugging
+                        const errorBody = await response.text();
+                        console.error(`Attempt ${attempt + 1}: Received status ${response.status}. Body: ${errorBody}`);
+                        throw new Error(`API call failed with status: ${response.status}`);
+                    }
+
+                    const result = await response.json();
+                    let extractedContent = result.candidates?.[0]?.content?.parts?.[0]?.text || "No content could be extracted.";
+                    
+                    if (extractedContent === "No content could be extracted.") {
+                        showMessage("Could not detect clear text in the image. Please try a clearer image.", 'error');
+                    } else if (mode === 'receipt' || mode === 'cam') {
+                        // Prettify JSON output for both structured modes
+                        try {
+                            const parsedJson = JSON.parse(extractedContent);
+                            extractedContent = JSON.stringify(parsedJson, null, 2);
+                            showMessage("Structured data extraction successful!", 'success');
+                            copyButton.disabled = false;
+                        } catch (e) {
+                            extractedContent = "ERROR: Failed to parse JSON. Raw response:\n" + extractedContent;
+                            showMessage("Extraction failed: AI did not return valid JSON.", 'error');
+                        }
+                    } else { // Raw mode
+                        showMessage("Raw text extraction successful!", 'success');
+                        copyButton.disabled = false;
+                    }
+
+                    resultTextarea.value = extractedContent;
+                    
+                    break; // Exit retry loop on success
+
+                } catch (error) {
+                    console.error("Error during API fetch:", error);
+                    if (attempt === 2) {
+                        showMessage(`Extraction failed after multiple attempts: ${error.message}`, 'error');
+                    } else {
+                        // Continue to next attempt after delay
+                    }
+                }
+            }
+
+            // Reset button state
+            extractButton.disabled = false;
+            buttonText.textContent = "Extract Text";
+            spinner.classList.add('hidden');
+        }
+
+        // Copy text to clipboard
+        function copyToClipboard() {
+            try {
+                const textToCopy = resultTextarea.value;
+                const tempInput = document.createElement("textarea");
+                tempInput.value = textToCopy;
+                document.body.appendChild(tempInput);
+                tempInput.select();
+                document.execCommand('copy'); // Using deprecated execCommand for broader iFrame compatibility
+                document.body.removeChild(tempInput);
+                showMessage("Text copied to clipboard!", 'success');
+            } catch (err) {
+                console.error('Failed to copy text: ', err);
+                showMessage('Failed to copy text. Please copy manually.', 'error');
+            }
+        }
+    </script>
+</body>
+</html>
